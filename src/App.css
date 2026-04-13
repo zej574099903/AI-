@@ -1,0 +1,139 @@
+﻿/* ── Layout ─────────────────────────────────── */
+.app {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 24px 16px 100px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 100vh;
+}
+
+/* ── Header ──────────────────────────────────── */
+.hd { text-align: center; padding: 8px 0; }
+.hd h1 { font-size: 1.8rem; font-weight: 600; margin-bottom: 6px; }
+.hd p  { font-size: 0.95rem; color: #888; }
+
+/* ── Upload zone ─────────────────────────────── */
+.upload {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  border: 2px dashed #ccc;
+  border-radius: 16px;
+  padding: 72px 40px;
+  background: white;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  margin-top: 16px;
+}
+.upload input { display: none; }
+.upload:hover,
+.upload.drag-over { border-color: #4f7ef8; background: #f0f5ff; }
+.upload-icon { font-size: 3rem; }
+.upload-main { font-size: 1.05rem; color: #333; font-weight: 500; }
+.upload-sub  { font-size: 0.85rem; color: #aaa; }
+
+/* ── Loading ─────────────────────────────────── */
+.loading-box {
+  background: white;
+  border-radius: 16px;
+  padding: 72px 40px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+.spin {
+  width: 36px; height: 36px;
+  border: 3px solid #eee;
+  border-top-color: #4f7ef8;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.prog-bar  { width: 280px; height: 6px; background: #eee; border-radius: 3px; overflow: hidden; }
+.prog-fill { height: 100%; background: #4f7ef8; transition: width 0.3s; }
+
+/* ── Top bar ─────────────────────────────────── */
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: white;
+  padding: 10px 16px;
+  border-radius: 12px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.06);
+}
+.bar-name { flex: 1; font-size: 0.9rem; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar-cnt  { font-size: 0.82rem; color: #aaa; flex-shrink: 0; }
+.btn-xs {
+  border: none; background: #f0f0f0; color: #555;
+  border-radius: 8px; padding: 5px 12px;
+  font-size: 0.82rem; cursor: pointer; flex-shrink: 0;
+}
+.btn-xs:hover { background: #e0e0e0; }
+
+/* ── Text body ───────────────────────────────── */
+.body {
+  background: white;
+  border-radius: 16px;
+  padding: 28px 32px;
+  line-height: 2.2;
+  font-size: 1.05rem;
+  box-shadow: 0 1px 4px rgba(0,0,0,.06);
+}
+.sent {
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 1px 2px;
+  display: inline;
+  transition: background 0.15s;
+}
+.sent:hover { background: #f0f0f0; }
+.sent.on    { background: #fff3b0; font-weight: 500; padding: 2px 4px; }
+
+/* ── Controls bar ────────────────────────────── */
+.ctrl {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  background: white;
+  box-shadow: 0 -2px 16px rgba(0,0,0,.1);
+  z-index: 100;
+}
+.ctrl-inner {
+  max-width: 860px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+}
+.ctrl-l { display: flex; gap: 8px; }
+.ctrl-m { flex: 1; text-align: center; }
+.ctrl-r { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.pos    { font-size: 0.88rem; color: #999; }
+
+.btn {
+  border: none; border-radius: 8px;
+  padding: 9px 20px; font-size: 0.9rem;
+  cursor: pointer; font-weight: 500;
+  transition: opacity 0.15s;
+}
+.btn:hover { opacity: 0.85; }
+.btn-play  { background: #4f7ef8; color: white; }
+.btn-pause { background: #ff9500; color: white; }
+.btn-stop  { background: #f0f0f0; color: #444; }
+
+.ctrl-r label {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 0.85rem; color: #777;
+}
+.ctrl-r select {
+  border: 1px solid #e0e0e0; border-radius: 8px;
+  padding: 5px 8px; font-size: 0.85rem;
+  outline: none; cursor: pointer; background: white;
+  max-width: 170px;
+}
