@@ -4,25 +4,34 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web",
+    "server": "node server.js",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "build:web": "expo export --platform web"
   },
   "dependencies": {
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "@react-native-community/slider": "5.0.1",
+    "dotenv": "^17.4.2",
+    "expo": "^54.0.0",
+    "expo-av": "~16.0.8",
+    "expo-crypto": "~15.0.8",
+    "expo-document-picker": "~14.0.8",
+    "expo-file-system": "~19.0.21",
+    "expo-status-bar": "~3.0.9",
     "pdfjs-dist": "^5.6.205",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4"
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "tencentcloud-sdk-nodejs-tts": "^4.1.203"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.1",
     "eslint": "^9.39.4",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",
-    "globals": "^17.4.0",
-    "vite": "^8.0.4"
+    "globals": "^17.4.0"
   }
 }

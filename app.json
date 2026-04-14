@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "PDF 朗读器",
+    "slug": "pdf-reader",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#f6efe4"
+      }
+    },
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}
