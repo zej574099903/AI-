@@ -2,8 +2,10 @@ import { Pressable, Text, TextInput, View } from 'react-native'
 
 export function SettingsScreen({
   apiBase,
+  apiStatus,
   extractMode,
   onCommitApiBase,
+  onCheckApiBase,
   onSetApiBase,
   onSetExtractMode,
   quotaRemainingText,
@@ -24,10 +26,24 @@ export function SettingsScreen({
             placeholder="http://192.168.x.x:8787"
             placeholderTextColor="#aa9073"
           />
+        </View>
+        <View style={styles.apiActionRow}>
+          <Pressable style={styles.apiGhostBtn} onPress={onCheckApiBase}>
+            <Text style={styles.apiGhostBtnText}>测试连接</Text>
+          </Pressable>
           <Pressable style={styles.apiBtn} onPress={onCommitApiBase}>
-            <Text style={styles.apiBtnText}>保存</Text>
+            <Text style={styles.apiBtnText}>保存地址</Text>
           </Pressable>
         </View>
+        <Text
+          style={[
+            styles.apiStatusText,
+            apiStatus?.type === 'success' && styles.apiStatusTextSuccess,
+            apiStatus?.type === 'error' && styles.apiStatusTextError,
+          ]}
+        >
+          {apiStatus?.message || '建议先点“测试连接”，确认 tunnel 地址当前可用。'}
+        </Text>
       </View>
 
       <View style={styles.settingsCard}>

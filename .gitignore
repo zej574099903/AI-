@@ -15,6 +15,7 @@ dist-ssr
 .expo
 android
 ios
+.runtime
 
 # Editor directories and files
 .vscode/*

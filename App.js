@@ -28,7 +28,7 @@ import {
   FREE_TTS_CHARS_PER_MONTH,
   PARAGRAPH_PAUSE_MS,
 } from './src/constants/app'
-import { extractPdf, synthesizeBatch } from './src/services/api'
+import { checkApiHealth, extractPdf, synthesizeBatch } from './src/services/api'
 import {
   addQuotaUsage,
   ensureLocalBookCopy,
@@ -56,6 +56,12 @@ function getErrorMessage(error, fallback = '未知错误') {
     return '无法连接到后端服务，请确认电脑后端已启动，且手机与电脑处于同一局域网。'
   }
   return message
+}
+
+function isLocalApiBase(value) {
+  return /localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+/.test(
+    String(value || '')
+  )
 }
 
 const TAB_ITEMS = {
@@ -92,6 +98,7 @@ export default function App() {
   const [speed, setSpeed] = useState(1)
   const [loadingText, setLoadingText] = useState('准备中...')
   const [apiBase, setApiBase] = useState(DEFAULT_API_BASE)
+  const [apiStatus, setApiStatus] = useState(null)
   const [seekValue, setSeekValue] = useState(0)
   const [isSeeking, setIsSeeking] = useState(false)
   const [library, setLibrary] = useState([])
@@ -144,9 +151,13 @@ export default function App() {
   useEffect(() => {
     AsyncStorage.getItem(API_BASE_KEY).then(saved => {
       if (!saved) return
-      if (saved.includes('127.0.0.1') || saved.includes('localhost')) {
+      if (isLocalApiBase(saved)) {
         setApiBase(DEFAULT_API_BASE)
         AsyncStorage.setItem(API_BASE_KEY, DEFAULT_API_BASE).catch(() => {})
+        setApiStatus({
+          type: 'info',
+          message: '检测到旧的局域网地址，已自动切换到当前默认远程地址。',
+        })
         return
       }
       setApiBase(saved)
@@ -636,11 +647,38 @@ export default function App() {
     const trimmed = apiBase.trim().replace(/\/$/, '')
     if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
       Alert.alert('地址格式错误', 'API 地址需要以 http:// 或 https:// 开头')
+      setApiStatus({ type: 'error', message: '地址格式不正确，需要以 http:// 或 https:// 开头。' })
       return
     }
 
     setApiBase(trimmed)
     await AsyncStorage.setItem(API_BASE_KEY, trimmed)
+    setApiStatus({ type: 'success', message: '后端地址已保存。建议再点一次“测试连接”确认当前可用。' })
+  }
+
+  async function verifyApiBase() {
+    const trimmed = apiBase.trim().replace(/\/$/, '')
+    if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+      Alert.alert('地址格式错误', 'API 地址需要以 http:// 或 https:// 开头')
+      setApiStatus({ type: 'error', message: '地址格式不正确，需要以 http:// 或 https:// 开头。' })
+      return
+    }
+
+    setApiStatus({ type: 'info', message: '正在测试连接...' })
+
+    try {
+      const payload = await checkApiHealth(trimmed)
+      const providerText = payload?.provider ? `，服务：${payload.provider}` : ''
+      setApiStatus({
+        type: 'success',
+        message: `连接成功，当前地址可用${providerText}。`,
+      })
+    } catch (error) {
+      setApiStatus({
+        type: 'error',
+        message: getErrorMessage(error, '后端连接失败，请确认电脑服务和 tunnel 都在运行。'),
+      })
+    }
   }
 
   function navigateToTab(tabKey) {
@@ -781,7 +819,9 @@ export default function App() {
       >
         <SettingsScreen
           apiBase={apiBase}
+          apiStatus={apiStatus}
           extractMode={extractMode}
+          onCheckApiBase={verifyApiBase}
           onCommitApiBase={commitApiBase}
           onSetApiBase={setApiBase}
           onSetExtractMode={setExtractMode}

@@ -181,11 +181,9 @@ export const styles = StyleSheet.create({
   },
   apiRow: {
     flexDirection: 'row',
-    gap: 8,
     alignItems: 'center',
   },
   apiInput: {
-    flex: 1,
     borderWidth: 1,
     borderColor: '#dbc5ab',
     borderRadius: 12,
@@ -195,7 +193,13 @@ export const styles = StyleSheet.create({
     fontSize: 16,
     color: '#2d2219',
   },
+  apiActionRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 10,
+  },
   apiBtn: {
+    flex: 1,
     borderRadius: 12,
     backgroundColor: '#b36a2e',
     paddingHorizontal: 18,
@@ -207,6 +211,33 @@ export const styles = StyleSheet.create({
   apiBtnText: {
     color: '#fff',
     fontWeight: '700',
+  },
+  apiGhostBtn: {
+    flex: 1,
+    borderRadius: 12,
+    backgroundColor: '#f2e5d5',
+    borderWidth: 1,
+    borderColor: '#dfc6a8',
+    paddingHorizontal: 18,
+    paddingVertical: 11,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  apiGhostBtnText: {
+    color: '#8a633f',
+    fontWeight: '700',
+  },
+  apiStatusText: {
+    marginTop: 10,
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#8f755d',
+  },
+  apiStatusTextSuccess: {
+    color: '#2f7a4b',
+  },
+  apiStatusTextError: {
+    color: '#b14d36',
   },
   importCard: {
     borderRadius: 28,

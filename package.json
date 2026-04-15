@@ -9,6 +9,9 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "server": "node server.js",
+    "tunnel:api": "bash ./scripts/start-cloudflared.sh 8787",
+    "remote:api": "bash ./scripts/launch-remote-api.sh",
+    "remote:api:stop": "bash ./scripts/stop-remote-api.sh",
     "lint": "eslint .",
     "build:web": "expo export --platform web"
   },
@@ -25,6 +28,7 @@
     "expo-document-picker": "~14.0.8",
     "expo-file-system": "~19.0.21",
     "expo-status-bar": "~3.0.9",
+    "expo-updates": "~29.0.16",
     "pdfjs-dist": "^5.6.205",
     "react": "19.1.0",
     "react-native": "0.81.5",

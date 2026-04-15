@@ -11,7 +11,7 @@ import tencentcloud from 'tencentcloud-sdk-nodejs-tts'
 dotenv.config()
 
 const PORT = Number(process.env.PORT || 8787)
-const HOST = process.env.HOST || '127.0.0.1'
+const HOST = process.env.HOST || '0.0.0.0'
 const CMAP_URL = new URL('./node_modules/pdfjs-dist/cmaps/', import.meta.url)
 const STANDARD_FONT_DATA_URL = new URL('./node_modules/pdfjs-dist/standard_fonts/', import.meta.url)
 const OCR_CACHE_ROOT = path.resolve('.cache/pdf-ocr')

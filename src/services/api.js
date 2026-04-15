@@ -24,6 +24,17 @@ export async function extractPdf({
   return payload
 }
 
+export async function checkApiHealth(apiBase) {
+  const response = await fetch(`${apiBase}/api/health`)
+  const payload = await response.json()
+
+  if (!response.ok || !payload?.ok) {
+    throw new Error(payload?.error || '后端连接失败')
+  }
+
+  return payload
+}
+
 export async function synthesizeBatch({
   apiBase,
   parts,
