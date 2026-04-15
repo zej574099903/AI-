@@ -17,6 +17,7 @@
       }
     },
     "android": {
+      "package": "com.zej574099903.aireader",
       "adaptiveIcon": {
         "backgroundColor": "#f6efe4"
       }
