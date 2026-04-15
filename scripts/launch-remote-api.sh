@@ -11,6 +11,8 @@ TUNNEL_PID_FILE="${LOG_DIR}/cloudflared.pid"
 PORT="${PORT:-8787}"
 TARGET_URL="http://127.0.0.1:${PORT}"
 
+cd "${ROOT_DIR}"
+
 mkdir -p "${LOG_DIR}"
 
 cleanup_pid_file() {

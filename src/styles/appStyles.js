@@ -188,9 +188,11 @@ export const styles = StyleSheet.create({
     borderColor: '#dbc5ab',
     borderRadius: 12,
     paddingHorizontal: 14,
-    paddingVertical: 11,
+    paddingVertical: 12,
+    minHeight: 92,
     backgroundColor: '#fff',
-    fontSize: 16,
+    fontSize: 15,
+    lineHeight: 22,
     color: '#2d2219',
   },
   apiActionRow: {

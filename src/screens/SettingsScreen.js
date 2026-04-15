@@ -22,6 +22,9 @@ export function SettingsScreen({
             value={apiBase}
             autoCapitalize="none"
             autoCorrect={false}
+            multiline
+            numberOfLines={3}
+            textAlignVertical="top"
             onChangeText={onSetApiBase}
             placeholder="http://192.168.x.x:8787"
             placeholderTextColor="#aa9073"
