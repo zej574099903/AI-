@@ -2,147 +2,80 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
-  Pressable,
   SafeAreaView,
   ScrollView,
-  StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native'
 import { StatusBar } from 'expo-status-bar'
+import { Ionicons } from '@expo/vector-icons'
+import {
+  DefaultTheme,
+  NavigationContainer,
+  createNavigationContainerRef,
+} from '@react-navigation/native'
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs'
+import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import * as DocumentPicker from 'expo-document-picker'
-import * as FileSystem from 'expo-file-system'
+import * as LegacyFileSystem from 'expo-file-system/legacy'
 import * as Crypto from 'expo-crypto'
 import { Audio } from 'expo-av'
-import Slider from '@react-native-community/slider'
 import AsyncStorage from '@react-native-async-storage/async-storage'
+import {
+  API_BASE_KEY,
+  DEFAULT_API_BASE,
+  DEFAULT_PAUSE_MS,
+  FREE_TTS_CHARS_PER_MONTH,
+  PARAGRAPH_PAUSE_MS,
+} from './src/constants/app'
+import { extractPdf, synthesizeBatch } from './src/services/api'
+import {
+  addQuotaUsage,
+  ensureLocalBookCopy,
+  readLibrary,
+  readProgressMap,
+  readProgress,
+  readQuotaUsage,
+  writeLibrary,
+  writeProgress,
+} from './src/services/storage'
+import {
+  countChineseChars,
+  formatDuration,
+  splitLongSentence,
+  toSentenceEntries,
+} from './src/utils/text'
+import { LibraryScreen } from './src/screens/LibraryScreen'
+import { ReaderScreen } from './src/screens/ReaderScreen'
+import { SettingsScreen } from './src/screens/SettingsScreen'
+import { styles } from './src/styles/appStyles'
 
-const STORAGE_KEY = 'pdf-reader-progress-v2'
-const API_BASE_KEY = 'pdf-reader-api-base'
-
-const VOICES = [
-  { id: '101055', label: '知冰（女）' },
-  { id: '101027', label: '知晗（女）' },
-  { id: '101054', label: '知峻（男）' },
-  { id: '101030', label: '知哲（男）' },
-  { id: '1001', label: '智聆女声' },
-  { id: '1002', label: '智聆男声' },
-]
-
-const SPEED_OPTIONS = [0.6, 0.8, 0.95, 1, 1.1, 1.25, 1.5]
-const PAUSE_OPTIONS = [
-  { value: 120, label: '短停顿' },
-  { value: 220, label: '中停顿' },
-  { value: 320, label: '长停顿' },
-]
-
-function countChineseChars(text) {
-  return (text.match(/[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/g) ?? []).length
-}
-
-function toSentences(text) {
-  return text
-    .replace(/\n+/g, ' ')
-    .split(/(?<=[。！？!?…]+)\s*/)
-    .map(s => s.trim())
-    .filter(Boolean)
-}
-
-function splitLongSentence(text, maxLength = 130) {
-  const normalized = text.replace(/\s+/g, ' ').trim()
-  if (!normalized) return []
-  if (normalized.length <= maxLength) return [normalized]
-
-  const clauses = normalized.match(/[^，。,；;：:！？!?、]+[，。,；;：:！？!?、]*/g) ?? [normalized]
-  const parts = []
-  let current = ''
-
-  for (const clause of clauses) {
-    const next = `${current}${clause}`.trim()
-    if (!current || next.length <= maxLength) {
-      current = next
-      continue
-    }
-
-    parts.push(current)
-
-    if (clause.length <= maxLength) {
-      current = clause.trim()
-      continue
-    }
-
-    let rest = clause.trim()
-    while (rest.length > maxLength) {
-      const window = rest.slice(0, maxLength)
-      const splitAt = Math.max(
-        window.lastIndexOf('，'),
-        window.lastIndexOf('。'),
-        window.lastIndexOf('！'),
-        window.lastIndexOf('？'),
-        window.lastIndexOf('；'),
-        window.lastIndexOf(';'),
-        window.lastIndexOf(','),
-        window.lastIndexOf('：'),
-        window.lastIndexOf(':'),
-        window.lastIndexOf('、'),
-        window.lastIndexOf(' ')
-      )
-
-      const cut = splitAt >= Math.floor(maxLength * 0.55) ? splitAt + 1 : maxLength
-      parts.push(rest.slice(0, cut).trim())
-      rest = rest.slice(cut).trim()
-    }
-
-    current = rest
+function getErrorMessage(error, fallback = '未知错误') {
+  const message = error instanceof Error ? error.message : fallback
+  if (message === 'Network request failed') {
+    return '无法连接到后端服务，请确认电脑后端已启动，且手机与电脑处于同一局域网。'
   }
-
-  if (current) parts.push(current)
-  return parts.filter(Boolean)
+  return message
 }
 
-function formatDuration(seconds) {
-  const total = Math.max(0, Math.round(seconds))
-  const hours = Math.floor(total / 3600)
-  const minutes = Math.floor((total % 3600) / 60)
-  const secs = total % 60
-
-  if (hours > 0) {
-    return `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
-  }
-
-  return `${minutes}:${String(secs).padStart(2, '0')}`
+const TAB_ITEMS = {
+  Library: { key: 'library', label: '书架', icon: 'library-outline', iconActive: 'library' },
+  Reader: { key: 'reader', label: '阅读', icon: 'book-outline', iconActive: 'book' },
+  Settings: { key: 'settings', label: '设置', icon: 'options-outline', iconActive: 'options' },
 }
 
-async function readProgress(pdfKey, total) {
-  try {
-    const raw = await AsyncStorage.getItem(STORAGE_KEY)
-    if (!raw) return 0
-    const data = JSON.parse(raw)
-    const saved = data[pdfKey]
-    if (!saved || saved.total !== total) return 0
-    return Math.max(0, Math.min(saved.idx || 0, total - 1))
-  } catch {
-    return 0
-  }
-}
-
-async function writeProgress(pdfKey, pdfName, idx, total) {
-  if (!pdfKey || total <= 0) return
-
-  try {
-    const raw = await AsyncStorage.getItem(STORAGE_KEY)
-    const data = raw ? JSON.parse(raw) : {}
-    data[pdfKey] = {
-      name: pdfName,
-      idx,
-      total,
-      updatedAt: Date.now(),
-    }
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(data))
-  } catch {
-    // ignore storage errors to keep playback smooth
-  }
+const Tab = createBottomTabNavigator()
+const navigationRef = createNavigationContainerRef()
+const navigationTheme = {
+  ...DefaultTheme,
+  colors: {
+    ...DefaultTheme.colors,
+    background: '#f2eadf',
+    card: '#fffaf4',
+    text: '#3a2b20',
+    border: '#ddccb6',
+    primary: '#b36a2e',
+  },
 }
 
 export default function App() {
@@ -150,27 +83,43 @@ export default function App() {
   const [pdfName, setPdfName] = useState('')
   const [pdfKey, setPdfKey] = useState('')
   const [sentences, setSentences] = useState([])
+  const [sentencePauses, setSentencePauses] = useState([])
   const [hanziCount, setHanziCount] = useState(0)
   const [curIdx, setCurIdx] = useState(-1)
   const [playing, setPlaying] = useState(false)
   const [statusText, setStatusText] = useState('')
-  const [voice, setVoice] = useState('101055')
+  const [voice, setVoice] = useState('101030')
   const [speed, setSpeed] = useState(1)
-  const [pauseMs, setPauseMs] = useState(220)
   const [loadingText, setLoadingText] = useState('准备中...')
-  const [apiBase, setApiBase] = useState('http://127.0.0.1:8787')
+  const [apiBase, setApiBase] = useState(DEFAULT_API_BASE)
   const [seekValue, setSeekValue] = useState(0)
   const [isSeeking, setIsSeeking] = useState(false)
+  const [library, setLibrary] = useState([])
+  const [activeTab, setActiveTab] = useState('library')
+  const [extractMode, setExtractMode] = useState('auto')
+  const [lastExtractMode, setLastExtractMode] = useState('')
+  const [quotaUsedChars, setQuotaUsedChars] = useState(0)
+  const [progressMap, setProgressMap] = useState({})
+  const [showVoicePanel, setShowVoicePanel] = useState(false)
+  const [immersiveMode, setImmersiveMode] = useState(false)
+  const [chromeHidden, setChromeHidden] = useState(false)
+  const [playerExpanded, setPlayerExpanded] = useState(false)
+  const shouldHideTabBar = activeTab === 'reader' && immersiveMode
 
   const sentencesRef = useRef([])
   const playingRef = useRef(false)
   const currentIndexRef = useRef(-1)
-  const voiceRef = useRef('101055')
+  const voiceRef = useRef('101030')
   const speedRef = useRef(1)
-  const pauseRef = useRef(220)
+  const pauseRef = useRef(DEFAULT_PAUSE_MS)
   const soundRef = useRef(null)
   const tokenRef = useRef(0)
   const cacheRef = useRef(new Map())
+  const readerScrollRef = useRef(null)
+  const sentenceOffsetsRef = useRef([])
+  const sentencePausesRef = useRef([])
+  const togglePlaybackRef = useRef(() => {})
+  const immersiveHideTimerRef = useRef(null)
 
   useEffect(() => {
     voiceRef.current = voice
@@ -181,12 +130,12 @@ export default function App() {
   }, [speed])
 
   useEffect(() => {
-    pauseRef.current = pauseMs
-  }, [pauseMs])
-
-  useEffect(() => {
     sentencesRef.current = sentences
   }, [sentences])
+
+  useEffect(() => {
+    sentencePausesRef.current = sentencePauses
+  }, [sentencePauses])
 
   useEffect(() => {
     currentIndexRef.current = curIdx
@@ -194,17 +143,87 @@ export default function App() {
 
   useEffect(() => {
     AsyncStorage.getItem(API_BASE_KEY).then(saved => {
-      if (saved) setApiBase(saved)
+      if (!saved) return
+      if (saved.includes('127.0.0.1') || saved.includes('localhost')) {
+        setApiBase(DEFAULT_API_BASE)
+        AsyncStorage.setItem(API_BASE_KEY, DEFAULT_API_BASE).catch(() => {})
+        return
+      }
+      setApiBase(saved)
     })
+    readLibrary().then(setLibrary)
+    readProgressMap().then(setProgressMap)
+    readQuotaUsage().then(setQuotaUsedChars)
   }, [])
 
   useEffect(() => {
+    Audio.setAudioModeAsync({
+      staysActiveInBackground: true,
+      playsInSilentModeIOS: true,
+      shouldDuckAndroid: true,
+      interruptionModeIOS: 1,
+      interruptionModeAndroid: 1,
+      playThroughEarpieceAndroid: false,
+    }).catch(() => {})
+
     return () => {
       if (soundRef.current) {
         soundRef.current.unloadAsync().catch(() => {})
       }
+      if (immersiveHideTimerRef.current) {
+        clearTimeout(immersiveHideTimerRef.current)
+      }
     }
   }, [])
+
+  useEffect(() => {
+    togglePlaybackRef.current = () => {
+      if (playingRef.current) {
+        handlePause()
+      } else {
+        handlePlay()
+      }
+    }
+  })
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+
+    const onKeyDown = event => {
+      if (event.code !== 'Space') return
+      const targetTag = event.target?.tagName
+      if (targetTag === 'INPUT' || targetTag === 'TEXTAREA') return
+      if (phase !== 'ready' || activeTab !== 'reader') return
+
+      event.preventDefault()
+      togglePlaybackRef.current()
+    }
+
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [activeTab, phase])
+
+  useEffect(() => {
+    if (immersiveHideTimerRef.current) {
+      clearTimeout(immersiveHideTimerRef.current)
+      immersiveHideTimerRef.current = null
+    }
+
+    if (!(activeTab === 'reader' && immersiveMode) || chromeHidden) return
+
+    immersiveHideTimerRef.current = setTimeout(() => {
+      setChromeHidden(true)
+    }, 2500)
+
+    return () => {
+      if (immersiveHideTimerRef.current) {
+        clearTimeout(immersiveHideTimerRef.current)
+        immersiveHideTimerRef.current = null
+      }
+    }
+  }, [activeTab, immersiveMode, chromeHidden, curIdx])
 
   const progressValue = isSeeking ? seekValue : Math.max(curIdx, 0)
   const progressPercent = sentences.length > 1
@@ -222,6 +241,39 @@ export default function App() {
 
   const elapsedTime = formatDuration((elapsedChars / 4.6) / speed)
   const remainingTime = formatDuration((remainingChars / 4.6) / speed)
+  const quotaRemainingChars = Math.max(0, FREE_TTS_CHARS_PER_MONTH - quotaUsedChars)
+  const quotaRemainingText = `${(quotaRemainingChars / 10000).toFixed(1)} 万字`
+  const currentSentencePreview = sentences[Math.max(progressValue, 0)] || ''
+
+  useEffect(() => {
+    if (phase !== 'ready' || curIdx < 0 || !readerScrollRef.current) return
+    const offset = sentenceOffsetsRef.current[curIdx]
+    if (typeof offset !== 'number') return
+    readerScrollRef.current.scrollTo({
+      y: Math.max(0, offset - 120),
+      animated: true,
+    })
+  }, [curIdx, phase])
+
+  async function upsertBook(record) {
+    const existing = await readLibrary()
+    const next = [record, ...existing.filter(item => item.pdfKey !== record.pdfKey)].slice(0, 8)
+    setLibrary(next)
+    await writeLibrary(next)
+  }
+
+  async function persistProgress(pdfKeyToSave, pdfNameToSave, idx, total) {
+    await writeProgress(pdfKeyToSave, pdfNameToSave, idx, total)
+    setProgressMap(prev => ({
+      ...prev,
+      [pdfKeyToSave]: {
+        name: pdfNameToSave,
+        idx,
+        total,
+        updatedAt: Date.now(),
+      },
+    }))
+  }
 
   function clearAudioCache() {
     cacheRef.current.clear()
@@ -253,35 +305,73 @@ export default function App() {
     }
   }
 
-  async function requestSentenceAudio(parts, playbackToken) {
-    const speedMap = {
-      0.6: -2,
-      0.8: -1,
-      0.95: -0.3,
-      1: 0,
-      1.1: 0.5,
-      1.25: 1.1,
-      1.5: 2,
+  async function loadPdfFromBase64({ name, base64, pdfKey: nextKey, localUri }) {
+    setPhase('loading')
+    setPdfName(name)
+    setStatusText('')
+    setLoadingText('提取文本中，如遇字体异常会自动尝试 OCR...')
+
+    await stopPlayback(true)
+
+    const resolvedPdfKey = nextKey ?? await Crypto.digestStringAsync(
+      Crypto.CryptoDigestAlgorithm.SHA256,
+      base64
+    )
+
+    const payload = await extractPdf({
+      apiBase,
+      base64,
+      cacheKey: resolvedPdfKey,
+      extractMode,
+      name,
+    })
+
+    const extracted = String(payload?.text || '').trim()
+    if (!extracted) {
+      throw new Error('PDF 中没有可提取文本')
     }
 
-    const response = await fetch(`${apiBase}/api/tts/synthesize-batch`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        texts: parts,
-        voiceType: voiceRef.current,
-        speed: speedMap[speedRef.current] ?? 0,
-      }),
+    const nextEntries = toSentenceEntries(extracted, PARAGRAPH_PAUSE_MS, DEFAULT_PAUSE_MS)
+    const nextSentences = nextEntries.map(item => item.text)
+    const nextSentencePauses = nextEntries.map(item => item.pauseAfterMs)
+    const restored = await readProgress(resolvedPdfKey, nextSentences.length)
+
+    setLastExtractMode(payload?.mode || extractMode)
+    setPdfKey(resolvedPdfKey)
+    setSentences(nextSentences)
+    setSentencePauses(nextSentencePauses)
+    setHanziCount(countChineseChars(extracted))
+    setCurIdx(restored)
+    setSeekValue(restored)
+    setPhase('ready')
+    setStatusText('')
+    navigateToTab('reader')
+
+    if (localUri) {
+      await upsertBook({
+        pdfKey: resolvedPdfKey,
+        name,
+        uri: localUri,
+        total: nextSentences.length,
+        updatedAt: Date.now(),
+      })
+    }
+  }
+
+  async function requestSentenceAudio(parts, playbackToken) {
+    const payload = await synthesizeBatch({
+      apiBase,
+      parts,
+      speed: speedRef.current,
+      voiceType: voiceRef.current,
     })
 
     if (playbackToken !== tokenRef.current || !playingRef.current) {
       throw new Error('Playback expired')
     }
 
-    const payload = await response.json()
-    if (!response.ok || !payload?.audioBase64) {
-      throw new Error(payload?.error || 'AI TTS 请求失败')
-    }
+    const used = await addQuotaUsage(parts.join('').length)
+    setQuotaUsedChars(used)
 
     return payload.audioBase64
   }
@@ -320,7 +410,7 @@ export default function App() {
       setCurIdx(idx)
       setSeekValue(idx)
       setStatusText(`朗读中：第 ${idx + 1} 句`)
-      await writeProgress(pdfKey, pdfName, idx, sentencesRef.current.length)
+      await persistProgress(pdfKey, pdfName, idx, sentencesRef.current.length)
 
       const base64 = await getAudioBase64(idx, playbackToken)
       if (!base64) {
@@ -339,11 +429,12 @@ export default function App() {
         playbackStatus => {
           if (!playbackStatus.isLoaded) return
           if (playbackStatus.didJustFinish) {
+            const pauseAfterMs = sentencePausesRef.current[idx] ?? pauseRef.current
             setTimeout(() => {
               if (playingRef.current && playbackToken === tokenRef.current) {
                 speakAt(idx + 1, playbackToken)
               }
-            }, pauseRef.current)
+            }, pauseAfterMs)
           }
         }
       )
@@ -351,8 +442,7 @@ export default function App() {
       soundRef.current = sound
     } catch (error) {
       if (!playingRef.current) return
-      const message = error instanceof Error ? error.message : '未知错误'
-      setStatusText(`朗读出错：${message}`)
+      setStatusText(`朗读出错：${getErrorMessage(error)}`)
       setTimeout(() => {
         if (playingRef.current && playbackToken === tokenRef.current) {
           speakAt(idx + 1, playbackToken)
@@ -372,15 +462,9 @@ export default function App() {
       if (result.canceled || !result.assets?.[0]) return
       const file = result.assets[0]
 
-      setPhase('loading')
-      setPdfName(file.name)
-      setStatusText('')
       setLoadingText('读取 PDF 文件...')
-
-      await stopPlayback(true)
-
-      const base64 = await FileSystem.readAsStringAsync(file.uri, {
-        encoding: FileSystem.EncodingType.Base64,
+      const base64 = await LegacyFileSystem.readAsStringAsync(file.uri, {
+        encoding: LegacyFileSystem.EncodingType.Base64,
       })
 
       setLoadingText('计算文件指纹...')
@@ -388,52 +472,93 @@ export default function App() {
         Crypto.CryptoDigestAlgorithm.SHA256,
         base64
       )
-
-      setLoadingText('提取文本中...')
-      const response = await fetch(`${apiBase}/api/pdf/extract`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          filename: file.name,
-          data: base64,
-        }),
+      const localUri = await ensureLocalBookCopy(file, nextPdfKey)
+      navigateToTab('reader')
+      await loadPdfFromBase64({
+        name: file.name,
+        base64,
+        pdfKey: nextPdfKey,
+        localUri,
       })
-
-      const payload = await response.json()
-      if (!response.ok) {
-        throw new Error(payload?.error || 'PDF 解析失败')
-      }
-
-      const extracted = String(payload?.text || '').trim()
-      if (!extracted) {
-        throw new Error('PDF 中没有可提取文本')
-      }
-
-      const nextSentences = toSentences(extracted)
-      const restored = await readProgress(nextPdfKey, nextSentences.length)
-
-      setPdfKey(nextPdfKey)
-      setSentences(nextSentences)
-      setHanziCount(countChineseChars(extracted))
-      setCurIdx(restored)
-      setSeekValue(restored)
-      setPhase('ready')
-      setStatusText('')
     } catch (error) {
-      const message = error instanceof Error ? error.message : '未知错误'
-      Alert.alert('导入失败', message)
+      Alert.alert('导入失败', getErrorMessage(error))
       setPhase('idle')
     }
+  }
+
+  async function openSavedBook(book) {
+    try {
+      setLoadingText('读取已保存书籍...')
+      const info = await LegacyFileSystem.getInfoAsync(book.uri)
+      if (!info.exists) {
+        throw new Error('本地书籍文件已丢失，请重新导入')
+      }
+
+      const base64 = await LegacyFileSystem.readAsStringAsync(book.uri, {
+        encoding: LegacyFileSystem.EncodingType.Base64,
+      })
+
+      await loadPdfFromBase64({
+        name: book.name,
+        base64,
+        pdfKey: book.pdfKey,
+        localUri: book.uri,
+      })
+      navigateToTab('reader')
+    } catch (error) {
+      Alert.alert('打开失败', getErrorMessage(error))
+      setPhase('idle')
+    }
+  }
+
+  async function resetReader() {
+    await stopPlayback(true)
+    setPhase('idle')
+    setPdfName('')
+    setPdfKey('')
+    setSentences([])
+    setSentencePauses([])
+    setHanziCount(0)
+    setLastExtractMode('')
+    setShowVoicePanel(false)
+    setImmersiveMode(false)
+    setChromeHidden(false)
+    setPlayerExpanded(false)
+    navigateToTab('library')
+  }
+
+  async function deleteBook(book) {
+    Alert.alert('删除书籍', `确定从书架中删除《${book.name}》吗？`, [
+      { text: '取消', style: 'cancel' },
+      {
+        text: '删除',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            const next = library.filter(item => item.pdfKey !== book.pdfKey)
+            setLibrary(next)
+            await writeLibrary(next)
+
+            const info = await LegacyFileSystem.getInfoAsync(book.uri)
+            if (info.exists) {
+              await LegacyFileSystem.deleteAsync(book.uri, { idempotent: true })
+            }
+
+            if (pdfKey === book.pdfKey) {
+              await resetReader()
+            }
+          } catch (error) {
+            Alert.alert('删除失败', getErrorMessage(error))
+          }
+        },
+      },
+    ])
   }
 
   async function handlePlay() {
     if (!sentencesRef.current.length) return
 
-    const canResumeCurrent =
-      soundRef.current &&
-      currentIndexRef.current >= 0 &&
-      !playingRef.current
-
+    const canResumeCurrent = soundRef.current && currentIndexRef.current >= 0 && !playingRef.current
     playingRef.current = true
     setPlaying(true)
 
@@ -479,7 +604,7 @@ export default function App() {
     setCurIdx(bounded)
     setSeekValue(bounded)
     currentIndexRef.current = bounded
-    await writeProgress(pdfKey, pdfName, bounded, sentencesRef.current.length)
+    await persistProgress(pdfKey, pdfName, bounded, sentencesRef.current.length)
 
     if (wasPlaying) {
       playingRef.current = true
@@ -518,404 +643,208 @@ export default function App() {
     await AsyncStorage.setItem(API_BASE_KEY, trimmed)
   }
 
-  async function resetReader() {
-    await stopPlayback(true)
-    setPhase('idle')
-    setPdfName('')
-    setPdfKey('')
-    setSentences([])
-    setHanziCount(0)
+  function navigateToTab(tabKey) {
+    setActiveTab(tabKey)
+
+    const routeName = Object.keys(TAB_ITEMS).find(name => TAB_ITEMS[name].key === tabKey)
+    if (routeName && navigationRef.isReady()) {
+      navigationRef.navigate(routeName)
+    }
+  }
+
+  function toggleImmersiveMode() {
+    setImmersiveMode(prev => {
+      const next = !prev
+      if (!next) {
+        setChromeHidden(false)
+      } else {
+        setChromeHidden(false)
+      }
+      return next
+    })
+  }
+
+  function renderLibraryTab() {
+    return (
+      <ScrollView
+        style={styles.page}
+        contentContainerStyle={styles.pageContent}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.heroCard}>
+          <View style={styles.header}>
+            <Text style={styles.title}>PDF 朗读器</Text>
+            <Text style={styles.subtitle}>移动端 AI 朗读 App</Text>
+          </View>
+        </View>
+
+        <LibraryScreen
+          library={library}
+          onDeleteBook={deleteBook}
+          onOpenBook={openSavedBook}
+          onPickPdf={pickPdf}
+          progressMap={progressMap}
+          styles={styles}
+        />
+
+        {phase === 'loading' && (
+          <View style={styles.loadingCard}>
+            <ActivityIndicator size="large" color="#b36a2e" />
+            <Text style={styles.loadingText}>{loadingText}</Text>
+          </View>
+        )}
+      </ScrollView>
+    )
+  }
+
+  function renderReaderTab() {
+    if (phase === 'ready') {
+      return (
+        <ReaderScreen
+          chromeHidden={chromeHidden}
+          curIdx={curIdx}
+          currentSentencePreview={currentSentencePreview}
+          elapsedTime={elapsedTime}
+          hanziCount={hanziCount}
+          immersiveMode={immersiveMode}
+          isSeeking={isSeeking}
+          lastExtractMode={lastExtractMode}
+          onChangeVoice={changeVoice}
+          onHandlePause={handlePause}
+          onHandlePlay={handlePlay}
+          onHandleStop={handleStop}
+          onJumpTo={jumpTo}
+          onResetReader={resetReader}
+          onSeekEnd={value => jumpTo(value, playingRef.current)}
+          onSeekStart={() => {}}
+          onSeekValue={setSeekValue}
+          onSetActiveTab={navigateToTab}
+          onSetChromeHidden={setChromeHidden}
+          onSetPlayerExpanded={setPlayerExpanded}
+          onSetShowVoicePanel={setShowVoicePanel}
+          onSetSpeed={setSpeed}
+          onToggleImmersiveMode={toggleImmersiveMode}
+          pdfName={pdfName}
+          playing={playing}
+          playerExpanded={playerExpanded}
+          progressPercent={progressPercent}
+          progressValue={progressValue}
+          readerScrollRef={readerScrollRef}
+          remainingTime={remainingTime}
+          seekValue={seekValue}
+          sentenceOffsetsRef={sentenceOffsetsRef}
+          sentences={sentences}
+          setIsSeeking={setIsSeeking}
+          showVoicePanel={showVoicePanel}
+          speed={speed}
+          statusText={statusText}
+          styles={styles}
+          voice={voice}
+        />
+      )
+    }
+
+    return (
+      <ScrollView
+        style={styles.page}
+        contentContainerStyle={styles.pageContent}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.heroCard}>
+          <View style={styles.header}>
+            <Text style={styles.title}>PDF 朗读器</Text>
+            <Text style={styles.subtitle}>移动端 AI 朗读 App</Text>
+          </View>
+        </View>
+
+        {phase === 'loading' ? (
+          <View style={styles.loadingCard}>
+            <ActivityIndicator size="large" color="#b36a2e" />
+            <Text style={styles.loadingText}>{loadingText}</Text>
+          </View>
+        ) : (
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyTitle}>还没有打开书籍</Text>
+            <Text style={styles.emptyHint}>先去书架导入一本 PDF，再回到阅读页。</Text>
+          </View>
+        )}
+      </ScrollView>
+    )
+  }
+
+  function renderSettingsTab() {
+    return (
+      <ScrollView
+        style={styles.page}
+        contentContainerStyle={styles.pageContent}
+        showsVerticalScrollIndicator={false}
+      >
+        <SettingsScreen
+          apiBase={apiBase}
+          extractMode={extractMode}
+          onCommitApiBase={commitApiBase}
+          onSetApiBase={setApiBase}
+          onSetExtractMode={setExtractMode}
+          quotaRemainingText={quotaRemainingText}
+          quotaUsedChars={quotaUsedChars}
+          styles={styles}
+        />
+      </ScrollView>
+    )
   }
 
   return (
-    <SafeAreaView style={styles.root}>
-      <StatusBar style="dark" />
-
-      <View style={styles.header}>
-        <Text style={styles.title}>PDF 朗读器</Text>
-        <Text style={styles.subtitle}>移动端 AI 朗读 App</Text>
-      </View>
-
-      <View style={styles.apiCard}>
-        <Text style={styles.apiLabel}>后端地址</Text>
-        <View style={styles.apiRow}>
-          <TextInput
-            style={styles.apiInput}
-            value={apiBase}
-            autoCapitalize="none"
-            autoCorrect={false}
-            onChangeText={setApiBase}
-            placeholder="http://192.168.x.x:8787"
-          />
-          <Pressable style={styles.apiBtn} onPress={commitApiBase}>
-            <Text style={styles.apiBtnText}>保存</Text>
-          </Pressable>
-        </View>
-      </View>
-
-      {phase === 'idle' && (
-        <Pressable style={styles.importCard} onPress={pickPdf}>
-          <Text style={styles.importTitle}>导入 PDF 文件</Text>
-          <Text style={styles.importHint}>支持文本型 PDF，导入后自动恢复阅读进度</Text>
-        </Pressable>
-      )}
-
-      {phase === 'loading' && (
-        <View style={styles.loadingCard}>
-          <ActivityIndicator size="large" color="#b36a2e" />
-          <Text style={styles.loadingText}>{loadingText}</Text>
-        </View>
-      )}
-
-      {phase === 'ready' && (
-        <>
-          <View style={styles.metaCard}>
-            <Text style={styles.metaName} numberOfLines={1}>{pdfName}</Text>
-            <View style={styles.metaWrap}>
-              <Text style={styles.metaChip}>{sentences.length} 句</Text>
-              <Text style={styles.metaChip}>约 {hanziCount.toLocaleString('zh-CN')} 汉字</Text>
-              <Text style={styles.metaChip}>已读 {elapsedTime}</Text>
-            </View>
-          </View>
-
-          <ScrollView style={styles.readerCard} contentContainerStyle={styles.readerContent}>
-            {sentences.map((sentence, idx) => (
-              <Text
-                key={`${idx}-${sentence.slice(0, 10)}`}
-                style={[styles.sentence, idx === curIdx && styles.activeSentence]}
-                onPress={() => jumpTo(idx, false)}
-              >
-                {sentence}{' '}
-              </Text>
-            ))}
-          </ScrollView>
-
-          <View style={styles.controls}>
-            <Slider
-              value={progressValue}
-              minimumValue={0}
-              maximumValue={Math.max(sentences.length - 1, 0)}
-              step={1}
-              minimumTrackTintColor="#b36a2e"
-              maximumTrackTintColor="#d9c9b5"
-              thumbTintColor="#8f4715"
-              onSlidingStart={() => setIsSeeking(true)}
-              onValueChange={setSeekValue}
-              onSlidingComplete={value => {
-                setIsSeeking(false)
-                jumpTo(value, playingRef.current)
-              }}
-            />
-
-            <Text style={styles.progressText}>
-              {progressValue + 1} / {sentences.length} · {progressPercent}% · {elapsedTime} / 剩余 {remainingTime}
-            </Text>
-
-            {statusText ? <Text style={styles.statusText}>{statusText}</Text> : null}
-
-            <View style={styles.buttonRow}>
-              <Pressable
-                style={[styles.ctrlBtn, playing ? styles.pauseBtn : styles.playBtn]}
-                onPress={playing ? handlePause : handlePlay}
-              >
-                <Text style={styles.ctrlBtnText}>{playing ? '暂停' : '播放'}</Text>
-              </Pressable>
-              <Pressable style={[styles.ctrlBtn, styles.stopBtn]} onPress={handleStop}>
-                <Text style={styles.stopBtnText}>停止</Text>
-              </Pressable>
-              <Pressable style={[styles.ctrlBtn, styles.fileBtn]} onPress={resetReader}>
-                <Text style={styles.fileBtnText}>换文件</Text>
-              </Pressable>
-            </View>
-
-            <View style={styles.settingGrid}>
-              <View style={styles.settingCol}>
-                <Text style={styles.settingLabel}>音色</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  {VOICES.map(item => (
-                    <Pressable
-                      key={item.id}
-                      style={[styles.tagBtn, voice === item.id && styles.tagBtnOn]}
-                      onPress={() => changeVoice(item.id)}
-                    >
-                      <Text style={[styles.tagText, voice === item.id && styles.tagTextOn]}>{item.label}</Text>
-                    </Pressable>
-                  ))}
-                </ScrollView>
-              </View>
-
-              <View style={styles.settingCol}>
-                <Text style={styles.settingLabel}>语速</Text>
-                <View style={styles.tagWrap}>
-                  {SPEED_OPTIONS.map(item => (
-                    <Pressable
-                      key={item}
-                      style={[styles.tagBtn, speed === item && styles.tagBtnOn]}
-                      onPress={() => setSpeed(item)}
-                    >
-                      <Text style={[styles.tagText, speed === item && styles.tagTextOn]}>{item}x</Text>
-                    </Pressable>
-                  ))}
-                </View>
-              </View>
-
-              <View style={styles.settingCol}>
-                <Text style={styles.settingLabel}>停顿</Text>
-                <View style={styles.tagWrap}>
-                  {PAUSE_OPTIONS.map(item => (
-                    <Pressable
-                      key={item.value}
-                      style={[styles.tagBtn, pauseMs === item.value && styles.tagBtnOn]}
-                      onPress={() => setPauseMs(item.value)}
-                    >
-                      <Text style={[styles.tagText, pauseMs === item.value && styles.tagTextOn]}>{item.label}</Text>
-                    </Pressable>
-                  ))}
-                </View>
-              </View>
-            </View>
-          </View>
-        </>
-      )}
-    </SafeAreaView>
+    <GestureHandlerRootView style={styles.root}>
+      <SafeAreaView style={styles.root}>
+        <StatusBar style="dark" />
+        <NavigationContainer
+          ref={navigationRef}
+          theme={navigationTheme}
+          onStateChange={() => {
+            const route = navigationRef.getCurrentRoute()
+            if (!route?.name || !TAB_ITEMS[route.name]) return
+            setActiveTab(TAB_ITEMS[route.name].key)
+          }}
+        >
+          <Tab.Navigator
+            initialRouteName="Library"
+            screenOptions={({ route }) => {
+              const item = TAB_ITEMS[route.name]
+              return {
+                headerShown: false,
+                tabBarHideOnKeyboard: true,
+                tabBarActiveTintColor: '#b36a2e',
+                tabBarInactiveTintColor: '#9a7d61',
+                tabBarStyle: [
+                  styles.nativeTabBar,
+                  shouldHideTabBar && styles.nativeTabBarHidden,
+                ],
+                tabBarItemStyle: styles.nativeTabItem,
+                tabBarLabelStyle: styles.nativeTabLabel,
+                tabBarIconStyle: styles.nativeTabIconWrap,
+                sceneStyle: styles.nativeScene,
+                tabBarIcon: ({ color, focused }) => (
+                  <Ionicons
+                    name={focused ? item.iconActive : item.icon}
+                    size={20}
+                    color={color}
+                  />
+                ),
+              }
+            }}
+          >
+            <Tab.Screen name="Library" options={{ title: TAB_ITEMS.Library.label }}>
+              {() => renderLibraryTab()}
+            </Tab.Screen>
+            <Tab.Screen name="Reader" options={{ title: TAB_ITEMS.Reader.label }}>
+              {() => renderReaderTab()}
+            </Tab.Screen>
+            <Tab.Screen name="Settings" options={{ title: TAB_ITEMS.Settings.label }}>
+              {() => renderSettingsTab()}
+            </Tab.Screen>
+          </Tab.Navigator>
+        </NavigationContainer>
+      </SafeAreaView>
+    </GestureHandlerRootView>
   )
 }
-
-const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: '#f4ede1',
-    paddingHorizontal: 14,
-    paddingTop: 12,
-    paddingBottom: 8,
-  },
-  header: {
-    marginBottom: 10,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#2b2117',
-  },
-  subtitle: {
-    marginTop: 4,
-    fontSize: 14,
-    color: '#806a54',
-  },
-  apiCard: {
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#e0ceb9',
-    backgroundColor: '#fffaf2',
-    padding: 12,
-    marginBottom: 10,
-  },
-  apiLabel: {
-    fontSize: 13,
-    color: '#7a614a',
-    marginBottom: 8,
-  },
-  apiRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  apiInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#dbc5ab',
-    borderRadius: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    backgroundColor: '#fff',
-  },
-  apiBtn: {
-    borderRadius: 12,
-    backgroundColor: '#b36a2e',
-    paddingHorizontal: 14,
-    justifyContent: 'center',
-  },
-  apiBtnText: {
-    color: '#fff',
-    fontWeight: '700',
-  },
-  importCard: {
-    borderRadius: 20,
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderColor: '#c99561',
-    backgroundColor: '#fff6ea',
-    paddingHorizontal: 18,
-    paddingVertical: 42,
-    alignItems: 'center',
-    marginTop: 10,
-  },
-  importTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#3a291a',
-    marginBottom: 10,
-  },
-  importHint: {
-    fontSize: 14,
-    lineHeight: 22,
-    color: '#81674f',
-    textAlign: 'center',
-  },
-  loadingCard: {
-    borderRadius: 18,
-    backgroundColor: '#fffaf2',
-    borderWidth: 1,
-    borderColor: '#e0ceb9',
-    paddingVertical: 40,
-    alignItems: 'center',
-    gap: 14,
-  },
-  loadingText: {
-    fontSize: 14,
-    color: '#72563d',
-  },
-  metaCard: {
-    borderRadius: 14,
-    backgroundColor: '#fffaf2',
-    borderWidth: 1,
-    borderColor: '#decbb5',
-    padding: 10,
-    marginBottom: 8,
-  },
-  metaName: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#35281d',
-    marginBottom: 8,
-  },
-  metaWrap: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  metaChip: {
-    backgroundColor: '#f1dcc4',
-    color: '#805637',
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    fontSize: 12,
-  },
-  readerCard: {
-    flex: 1,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: '#dcc7b0',
-    backgroundColor: '#fffdf8',
-    marginBottom: 10,
-  },
-  readerContent: {
-    paddingHorizontal: 16,
-    paddingVertical: 20,
-  },
-  sentence: {
-    fontSize: 18,
-    lineHeight: 34,
-    color: '#2d2219',
-  },
-  activeSentence: {
-    backgroundColor: '#ffe8ad',
-    borderRadius: 8,
-    color: '#663a16',
-    fontWeight: '600',
-  },
-  controls: {
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#dcc7b0',
-    backgroundColor: '#fffaf3',
-    paddingHorizontal: 12,
-    paddingTop: 10,
-    paddingBottom: 12,
-    gap: 8,
-  },
-  progressText: {
-    fontSize: 12,
-    color: '#7f6348',
-  },
-  statusText: {
-    fontSize: 12,
-    color: '#965523',
-  },
-  buttonRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 4,
-  },
-  ctrlBtn: {
-    flex: 1,
-    borderRadius: 12,
-    paddingVertical: 11,
-    alignItems: 'center',
-  },
-  playBtn: {
-    backgroundColor: '#b36a2e',
-  },
-  pauseBtn: {
-    backgroundColor: '#d18338',
-  },
-  stopBtn: {
-    backgroundColor: '#e3d7c9',
-  },
-  fileBtn: {
-    backgroundColor: '#e9dfd2',
-  },
-  ctrlBtnText: {
-    color: '#fff',
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  stopBtnText: {
-    color: '#5f4b39',
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  fileBtnText: {
-    color: '#5f4b39',
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  settingGrid: {
-    gap: 10,
-    marginTop: 6,
-  },
-  settingCol: {
-    gap: 6,
-  },
-  settingLabel: {
-    fontSize: 12,
-    color: '#7f6348',
-    fontWeight: '600',
-  },
-  tagWrap: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  tagBtn: {
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#d8c2a9',
-    backgroundColor: '#fffdf9',
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    marginRight: 6,
-  },
-  tagBtnOn: {
-    borderColor: '#b36a2e',
-    backgroundColor: '#f4dfc5',
-  },
-  tagText: {
-    fontSize: 12,
-    color: '#6f5944',
-  },
-  tagTextOn: {
-    color: '#7d4318',
-    fontWeight: '700',
-  },
-})

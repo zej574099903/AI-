@@ -1,18 +1,26 @@
 import http from 'node:http'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import path from 'node:path'
 import { URL } from 'node:url'
 import * as dotenv from 'dotenv'
+import { createCanvas } from '@napi-rs/canvas'
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { createWorker } from 'tesseract.js'
 import tencentcloud from 'tencentcloud-sdk-nodejs-tts'
 
 dotenv.config()
 
 const PORT = Number(process.env.PORT || 8787)
 const HOST = process.env.HOST || '127.0.0.1'
+const CMAP_URL = new URL('./node_modules/pdfjs-dist/cmaps/', import.meta.url)
+const STANDARD_FONT_DATA_URL = new URL('./node_modules/pdfjs-dist/standard_fonts/', import.meta.url)
+const OCR_CACHE_ROOT = path.resolve('.cache/pdf-ocr')
 const ALLOWED_ORIGINS = new Set([
   'http://localhost:5173',
   'http://127.0.0.1:5173',
   process.env.APP_ORIGIN,
 ].filter(Boolean))
+let ocrWorkerPromise = null
 
 function getCorsHeaders(origin) {
   return {
@@ -74,18 +82,187 @@ function extractPageText(items) {
   return text.trim()
 }
 
+function getChineseRatio(text) {
+  const compact = text.replace(/\s+/g, '')
+  if (!compact) return 0
+  const chineseChars = (compact.match(/[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/g) ?? []).length
+  return chineseChars / compact.length
+}
+
+function getSymbolRatio(text) {
+  const compact = text.replace(/\s+/g, '')
+  if (!compact) return 1
+  const symbols = (compact.match(/[^A-Za-z0-9\u3400-\u4dbf\u4e00-\u9fff]/g) ?? []).length
+  return symbols / compact.length
+}
+
+function isLikelyGarbledText(text) {
+  const compact = text.replace(/\s+/g, '')
+  if (!compact) return true
+  const chineseRatio = getChineseRatio(compact)
+  const symbolRatio = getSymbolRatio(compact)
+  return compact.length > 120 && chineseRatio < 0.08 && symbolRatio > 0.18
+}
+
+function normalizeRecognizedText(text) {
+  return text
+    .replace(/\r/g, '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/([，。！？；：、“”‘’（）《》〈〉【】])\s+/g, '$1')
+    .replace(/\s+([，。！？；：、“”‘’（）《》〈〉【】])/g, '$1')
+    .replace(/([\u3400-\u4dbf\u4e00-\u9fff])\s+([\u3400-\u4dbf\u4e00-\u9fff])/g, '$1$2')
+    .replace(/([\u3400-\u4dbf\u4e00-\u9fff])\s+([，。！？；：、“”‘’）】》])/g, '$1$2')
+    .replace(/([（【《“])\s+([\u3400-\u4dbf\u4e00-\u9fff])/g, '$1$2')
+    .trim()
+}
+
+function isNoiseBlock(text) {
+  if (!text) return true
+  if (/^[-_\s\d/]+$/.test(text)) return true
+  if (/^第?\s*\d+\s*页$/.test(text)) return true
+  if (/^page\s*\d+$/i.test(text)) return true
+  return false
+}
+
+function looksLikeHeadingBlock(text) {
+  return /^(第[一二三四五六七八九十百千万0-9]+[章节回部卷篇]|目录|前言|序言|引言)/.test(text)
+}
+
+function shouldMergeBlocks(prev, next) {
+  if (!prev || !next) return false
+  if (looksLikeHeadingBlock(next)) return false
+  if (/[。！？!?；;：:]$/.test(prev)) return false
+  if (/^[（(【[]?[0-9一二三四五六七八九十]+[）).、]/.test(next)) return false
+  return true
+}
+
+function cleanExtractedText(text) {
+  const normalized = String(text || '')
+    .replace(/\r/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+
+  const rawBlocks = normalized
+    .split(/\n{2,}/)
+    .map(block => normalizeRecognizedText(block))
+    .filter(block => !isNoiseBlock(block))
+
+  const merged = []
+
+  for (const block of rawBlocks) {
+    if (!merged.length) {
+      merged.push(block)
+      continue
+    }
+
+    const prev = merged[merged.length - 1]
+    if (shouldMergeBlocks(prev, block)) {
+      merged[merged.length - 1] = `${prev}${block}`
+      continue
+    }
+
+    merged.push(block)
+  }
+
+  return merged.join('\n\n').trim()
+}
+
+async function getOcrWorker() {
+  if (!ocrWorkerPromise) {
+    ocrWorkerPromise = (async () => {
+      const worker = await createWorker('chi_sim+eng')
+      await worker.setParameters({
+        preserve_interword_spaces: '1',
+      })
+      return worker
+    })()
+  }
+
+  return ocrWorkerPromise
+}
+
+async function renderPageToPng(page, scale = 2) {
+  const viewport = page.getViewport({ scale })
+  const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height))
+  const context = canvas.getContext('2d')
+  await page.render({
+    canvasContext: context,
+    viewport,
+  }).promise
+  return canvas.toBuffer('image/png')
+}
+
+function getOcrCachePaths(cacheKey, pageNumber) {
+  const dir = path.join(OCR_CACHE_ROOT, cacheKey)
+  return {
+    dir,
+    file: path.join(dir, `page-${pageNumber}.txt`),
+  }
+}
+
 async function extractTextFromPdfBuffer(buffer) {
-  const pdf = await pdfjsLib.getDocument({ data: buffer }).promise
+  const pdfData = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
+  const pdf = await pdfjsLib.getDocument({
+    data: pdfData,
+    cMapUrl: CMAP_URL.href,
+    cMapPacked: true,
+    standardFontDataUrl: STANDARD_FONT_DATA_URL.href,
+    useSystemFonts: true,
+    stopAtErrors: false,
+  }).promise
   const chunks = []
   for (let i = 1; i <= pdf.numPages; i += 1) {
     const page = await pdf.getPage(i)
-    const content = await page.getTextContent()
+    const content = await page.getTextContent({
+      normalizeWhitespace: true,
+      disableCombineTextItems: false,
+    })
     const t = extractPageText(content.items)
     if (t) chunks.push(t)
   }
   return {
     pages: pdf.numPages,
     text: chunks.join('\n\n'),
+  }
+}
+
+async function extractTextWithOcr(buffer, cacheKey = 'default') {
+  const pdfData = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
+  const pdf = await pdfjsLib.getDocument({
+    data: pdfData,
+    cMapUrl: CMAP_URL.href,
+    cMapPacked: true,
+    standardFontDataUrl: STANDARD_FONT_DATA_URL.href,
+    useSystemFonts: true,
+    stopAtErrors: false,
+  }).promise
+
+  const worker = await getOcrWorker()
+  const pages = []
+
+  for (let i = 1; i <= pdf.numPages; i += 1) {
+    const cachePaths = getOcrCachePaths(cacheKey, i)
+    await mkdir(cachePaths.dir, { recursive: true })
+
+    let text = ''
+    try {
+      text = (await readFile(cachePaths.file, 'utf8')).trim()
+    } catch {
+      const page = await pdf.getPage(i)
+      const pngBuffer = await renderPageToPng(page)
+      const result = await worker.recognize(pngBuffer)
+      text = String(result?.data?.text || '').trim()
+      if (text) {
+        await writeFile(cachePaths.file, text, 'utf8')
+      }
+    }
+
+    if (text) pages.push(text)
+  }
+
+  return {
+    pages: pdf.numPages,
+    text: pages.join('\n\n'),
   }
 }
 
@@ -198,13 +375,28 @@ const server = http.createServer(async (req, res) => {
         return
       }
 
-      const pdfBuffer = Buffer.from(data, 'base64')
-      const result = await extractTextFromPdfBuffer(pdfBuffer)
+      const pdfBuffer = new Uint8Array(Buffer.from(data, 'base64'))
+      const cacheKey = String(body.cacheKey || 'default').replace(/[^a-zA-Z0-9_-]/g, '')
+      let result = await extractTextFromPdfBuffer(pdfBuffer)
+      let mode = 'text'
+
+      if (body.forceOcr || isLikelyGarbledText(result.text)) {
+        try {
+          const ocrResult = await extractTextWithOcr(pdfBuffer, cacheKey || 'default')
+          if (ocrResult.text.trim()) {
+            result = ocrResult
+            mode = 'ocr'
+          }
+        } catch (ocrError) {
+          console.error('PDF OCR fallback failed:', ocrError)
+        }
+      }
 
       sendJson(res, 200, {
         ok: true,
         pages: result.pages,
-        text: result.text,
+        text: cleanExtractedText(result.text),
+        mode,
       }, origin)
     } catch (error) {
       sendJson(res, error.status || 500, {
