@@ -5,8 +5,8 @@ import { Ionicons } from '@expo/vector-icons'
 import { SPEED_OPTIONS, VOICES } from '../constants/app'
 
 export function ReaderScreen({
+  activeChunkRange,
   chromeHidden,
-  curIdx,
   currentSentencePreview,
   elapsedTime,
   hanziCount,
@@ -149,25 +149,38 @@ export function ReaderScreen({
           showsVerticalScrollIndicator={false}
         >
           {sentences.map((sentence, idx) => (
-            <Pressable
-              key={`${idx}-${sentence.slice(0, 10)}`}
-              style={[styles.sentenceBlock, idx === curIdx && styles.activeSentenceBlock]}
-              onPress={() => {
-                if (immersiveMode) {
-                  onSetChromeHidden(prev => !prev)
-                  return
-                }
-                onJumpTo(idx, false)
-              }}
-              onLongPress={() => onJumpTo(idx, false)}
-              onLayout={event => {
-                sentenceOffsetsRef.current[idx] = event.nativeEvent.layout.y
-              }}
-            >
-              <Text style={[styles.sentence, idx === curIdx && styles.activeSentence]}>
-                {sentence}
-              </Text>
-            </Pressable>
+            (() => {
+              const isActiveChunk = (
+                activeChunkRange &&
+                idx >= activeChunkRange.start &&
+                idx <= activeChunkRange.end
+              )
+
+              return (
+                <Pressable
+                  key={`${idx}-${sentence.slice(0, 10)}`}
+                  style={[
+                    styles.sentenceBlock,
+                    isActiveChunk && styles.activeSentenceBlock,
+                  ]}
+                  onPress={() => {
+                    if (immersiveMode) {
+                      onSetChromeHidden(prev => !prev)
+                      return
+                    }
+                    onJumpTo(idx, false)
+                  }}
+                  onLongPress={() => onJumpTo(idx, false)}
+                  onLayout={event => {
+                    sentenceOffsetsRef.current[idx] = event.nativeEvent.layout.y
+                  }}
+                >
+                  <Text style={[styles.sentence, isActiveChunk && styles.activeSentence]}>
+                    {sentence}
+                  </Text>
+                </Pressable>
+              )
+            })()
           ))}
         </ScrollView>
       </View>

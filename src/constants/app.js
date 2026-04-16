@@ -6,6 +6,9 @@ export const DEFAULT_API_BASE = 'https://selling-transcripts-pot-logging.tryclou
 export const FREE_TTS_CHARS_PER_MONTH = 8000000
 export const DEFAULT_PAUSE_MS = 25
 export const PARAGRAPH_PAUSE_MS = 50
+export const PREFETCH_SENTENCE_COUNT = 2
+export const PLAYBACK_CHUNK_MAX_SENTENCES = 6
+export const PLAYBACK_CHUNK_MAX_CHARS = 260
 
 export const VOICES = [
   { id: '101055', label: '知冰（女）' },

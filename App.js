@@ -27,6 +27,9 @@ import {
   DEFAULT_PAUSE_MS,
   FREE_TTS_CHARS_PER_MONTH,
   PARAGRAPH_PAUSE_MS,
+  PLAYBACK_CHUNK_MAX_CHARS,
+  PLAYBACK_CHUNK_MAX_SENTENCES,
+  PREFETCH_SENTENCE_COUNT,
 } from './src/constants/app'
 import { checkApiHealth, extractPdf, synthesizeBatch } from './src/services/api'
 import {
@@ -89,7 +92,7 @@ export default function App() {
   const [pdfName, setPdfName] = useState('')
   const [pdfKey, setPdfKey] = useState('')
   const [sentences, setSentences] = useState([])
-  const [sentencePauses, setSentencePauses] = useState([])
+  const [activeChunkRange, setActiveChunkRange] = useState(null)
   const [hanziCount, setHanziCount] = useState(0)
   const [curIdx, setCurIdx] = useState(-1)
   const [playing, setPlaying] = useState(false)
@@ -116,15 +119,14 @@ export default function App() {
   const sentencesRef = useRef([])
   const playingRef = useRef(false)
   const currentIndexRef = useRef(-1)
+  const activeChunkEndRef = useRef(-1)
   const voiceRef = useRef('101030')
   const speedRef = useRef(1)
-  const pauseRef = useRef(DEFAULT_PAUSE_MS)
   const soundRef = useRef(null)
   const tokenRef = useRef(0)
   const cacheRef = useRef(new Map())
   const readerScrollRef = useRef(null)
   const sentenceOffsetsRef = useRef([])
-  const sentencePausesRef = useRef([])
   const togglePlaybackRef = useRef(() => {})
   const immersiveHideTimerRef = useRef(null)
 
@@ -139,10 +141,6 @@ export default function App() {
   useEffect(() => {
     sentencesRef.current = sentences
   }, [sentences])
-
-  useEffect(() => {
-    sentencePausesRef.current = sentencePauses
-  }, [sentencePauses])
 
   useEffect(() => {
     currentIndexRef.current = curIdx
@@ -311,8 +309,10 @@ export default function App() {
 
     if (resetIndex) {
       setCurIdx(-1)
+      setActiveChunkRange(null)
       setSeekValue(0)
       currentIndexRef.current = -1
+      activeChunkEndRef.current = -1
     }
   }
 
@@ -344,13 +344,12 @@ export default function App() {
 
     const nextEntries = toSentenceEntries(extracted, PARAGRAPH_PAUSE_MS, DEFAULT_PAUSE_MS)
     const nextSentences = nextEntries.map(item => item.text)
-    const nextSentencePauses = nextEntries.map(item => item.pauseAfterMs)
     const restored = await readProgress(resolvedPdfKey, nextSentences.length)
 
     setLastExtractMode(payload?.mode || extractMode)
     setPdfKey(resolvedPdfKey)
     setSentences(nextSentences)
-    setSentencePauses(nextSentencePauses)
+    setActiveChunkRange(null)
     setHanziCount(countChineseChars(extracted))
     setCurIdx(restored)
     setSeekValue(restored)
@@ -387,20 +386,88 @@ export default function App() {
     return payload.audioBase64
   }
 
-  async function getAudioBase64(idx, playbackToken) {
-    const cacheKey = `${playbackToken}:${idx}:${voiceRef.current}:${speedRef.current}`
+  function buildPlaybackChunk(startIdx) {
+    const parts = []
+    let totalChars = 0
+    let endIdx = startIdx - 1
+
+    for (
+      let idx = startIdx;
+      idx < sentencesRef.current.length && idx < startIdx + PLAYBACK_CHUNK_MAX_SENTENCES;
+      idx += 1
+    ) {
+      const sentence = sentencesRef.current[idx]?.trim()
+      if (!sentence) continue
+
+      const nextTotalChars = totalChars + sentence.length
+      if (endIdx >= startIdx && nextTotalChars > PLAYBACK_CHUNK_MAX_CHARS) {
+        break
+      }
+
+      parts.push(...splitLongSentence(sentence))
+      totalChars = nextTotalChars
+      endIdx = idx
+    }
+
+    if (endIdx < startIdx) {
+      const fallbackSentence = sentencesRef.current[startIdx]?.trim()
+      if (!fallbackSentence) {
+        return {
+          startIdx,
+          endIdx: startIdx,
+          parts: [],
+        }
+      }
+
+      return {
+        startIdx,
+        endIdx: startIdx,
+        parts: splitLongSentence(fallbackSentence),
+      }
+    }
+
+    return {
+      startIdx,
+      endIdx,
+      parts,
+    }
+  }
+
+  async function getChunkAudio(startIdx, playbackToken) {
+    const chunk = buildPlaybackChunk(startIdx)
+    const cacheKey = `${playbackToken}:${chunk.startIdx}-${chunk.endIdx}:${voiceRef.current}:${speedRef.current}`
     const cached = cacheRef.current.get(cacheKey)
     if (cached) return cached
 
     const promise = (async () => {
-      const sentence = sentencesRef.current[idx]?.trim()
-      if (!sentence) return ''
-      const parts = splitLongSentence(sentence)
-      return requestSentenceAudio(parts, playbackToken)
+      if (!chunk.parts.length) {
+        return {
+          audioBase64: '',
+          endIdx: chunk.endIdx,
+        }
+      }
+
+      const audioBase64 = await requestSentenceAudio(chunk.parts, playbackToken)
+      return {
+        audioBase64,
+        endIdx: chunk.endIdx,
+      }
     })()
 
     cacheRef.current.set(cacheKey, promise)
     return promise
+  }
+
+  function prefetchUpcomingAudio(startIdx, playbackToken, count = PREFETCH_SENTENCE_COUNT) {
+    let nextStartIdx = startIdx
+
+    for (let offset = 0; offset < count; offset += 1) {
+      if (nextStartIdx >= sentencesRef.current.length) break
+
+      const nextChunk = buildPlaybackChunk(nextStartIdx)
+      getChunkAudio(nextStartIdx, playbackToken).catch(() => {})
+      nextStartIdx = nextChunk.endIdx + 1
+    }
   }
 
   async function speakAt(idx, playbackToken = tokenRef.current) {
@@ -420,12 +487,18 @@ export default function App() {
 
       setCurIdx(idx)
       setSeekValue(idx)
-      setStatusText(`朗读中：第 ${idx + 1} 句`)
+      const currentChunk = buildPlaybackChunk(idx)
+      setActiveChunkRange({ start: idx, end: currentChunk.endIdx })
+      activeChunkEndRef.current = currentChunk.endIdx
+      setStatusText(`朗读中：第 ${idx + 1} - ${currentChunk.endIdx + 1} 句`)
       await persistProgress(pdfKey, pdfName, idx, sentencesRef.current.length)
 
-      const base64 = await getAudioBase64(idx, playbackToken)
-      if (!base64) {
-        await speakAt(idx + 1, playbackToken)
+      const currentAudioPromise = getChunkAudio(idx, playbackToken)
+      prefetchUpcomingAudio(currentChunk.endIdx + 1, playbackToken)
+
+      const { audioBase64, endIdx } = await currentAudioPromise
+      if (!audioBase64) {
+        await speakAt(endIdx + 1, playbackToken)
         return
       }
 
@@ -433,19 +506,18 @@ export default function App() {
         return
       }
 
-      const uri = `data:audio/mpeg;base64,${base64}`
+      const uri = `data:audio/mpeg;base64,${audioBase64}`
       const { sound } = await Audio.Sound.createAsync(
         { uri },
         { shouldPlay: true },
         playbackStatus => {
           if (!playbackStatus.isLoaded) return
           if (playbackStatus.didJustFinish) {
-            const pauseAfterMs = sentencePausesRef.current[idx] ?? pauseRef.current
             setTimeout(() => {
               if (playingRef.current && playbackToken === tokenRef.current) {
-                speakAt(idx + 1, playbackToken)
+                speakAt(endIdx + 1, playbackToken)
               }
-            }, pauseAfterMs)
+            }, 0)
           }
         }
       )
@@ -456,7 +528,7 @@ export default function App() {
       setStatusText(`朗读出错：${getErrorMessage(error)}`)
       setTimeout(() => {
         if (playingRef.current && playbackToken === tokenRef.current) {
-          speakAt(idx + 1, playbackToken)
+          speakAt(activeChunkEndRef.current + 1, playbackToken)
         }
       }, 800)
     }
@@ -528,7 +600,7 @@ export default function App() {
     setPdfName('')
     setPdfKey('')
     setSentences([])
-    setSentencePauses([])
+    setActiveChunkRange(null)
     setHanziCount(0)
     setLastExtractMode('')
     setShowVoicePanel(false)
@@ -741,6 +813,7 @@ export default function App() {
         <ReaderScreen
           chromeHidden={chromeHidden}
           curIdx={curIdx}
+          activeChunkRange={activeChunkRange}
           currentSentencePreview={currentSentencePreview}
           elapsedTime={elapsedTime}
           hanziCount={hanziCount}
