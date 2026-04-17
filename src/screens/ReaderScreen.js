@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Animated, Pressable, ScrollView, Text, View } from 'react-native'
 import Slider from '@react-native-community/slider'
 import { Ionicons } from '@expo/vector-icons'
@@ -24,10 +24,12 @@ export function ReaderScreen({
   onSeekValue,
   onSetActiveTab,
   onSetChromeHidden,
+  onSetIsLocked,
   onSetPlayerExpanded,
   onSetShowVoicePanel,
   onSetSpeed,
   onToggleImmersiveMode,
+  isLocked,
   pdfName,
   playing,
   playerExpanded,
@@ -45,6 +47,7 @@ export function ReaderScreen({
   styles,
   voice,
 }) {
+  const [showLockHint, onSetShowLockHint] = useState(false)
   const toolbarAnim = useMemo(() => new Animated.Value(1), [])
   const dockAnim = useMemo(() => new Animated.Value(1), [])
 
@@ -64,6 +67,13 @@ export function ReaderScreen({
       }),
     ]).start()
   }, [chromeHidden, dockAnim, toolbarAnim])
+
+  useEffect(() => {
+    if (showLockHint) {
+      const timer = setTimeout(() => onSetShowLockHint(false), 2000)
+      return () => clearTimeout(timer)
+    }
+  }, [showLockHint])
 
   return (
     <View style={styles.readyShell}>
@@ -164,13 +174,20 @@ export function ReaderScreen({
                     isActiveChunk && styles.activeSentenceBlock,
                   ]}
                   onPress={() => {
+                    if (isLocked) {
+                      onSetShowLockHint(true)
+                      return
+                    }
                     if (immersiveMode) {
                       onSetChromeHidden(prev => !prev)
                       return
                     }
                     onJumpTo(idx, false)
                   }}
-                  onLongPress={() => onJumpTo(idx, false)}
+                  onLongPress={() => {
+                    if (isLocked) return
+                    onJumpTo(idx, false)
+                  }}
                   onLayout={event => {
                     sentenceOffsetsRef.current[idx] = event.nativeEvent.layout.y
                   }}
@@ -226,6 +243,33 @@ export function ReaderScreen({
 
             <View style={styles.drawerQuickRow}>
               <View style={styles.drawerQuickSide}>
+                <Pressable
+                  style={[styles.lockBtn, isLocked && styles.lockBtnLocked]}
+                  onPress={() => {
+                    if (!isLocked) {
+                      onSetIsLocked(true)
+                    } else {
+                      onSetShowLockHint(true)
+                    }
+                  }}
+                  onLongPress={() => {
+                    if (isLocked) {
+                      onSetIsLocked(false)
+                    }
+                  }}
+                  delayLongPress={1000}
+                >
+                  <Ionicons
+                    name={isLocked ? 'lock-closed' : 'lock-open'}
+                    size={22}
+                    color={isLocked ? '#d18338' : '#7b4f28'}
+                  />
+                  {showLockHint && isLocked && (
+                    <View style={styles.unlockHint}>
+                      <Text style={styles.unlockHintText}>长按解锁</Text>
+                    </View>
+                  )}
+                </Pressable>
                 <View style={styles.playerMiniBadge}>
                   <Text style={styles.playerMiniBadgeText}>{progressPercent}%</Text>
                 </View>
@@ -235,6 +279,10 @@ export function ReaderScreen({
                 style={[styles.miniPlayBtn, playing && styles.miniPauseBtn]}
                 onPress={event => {
                   event.stopPropagation?.()
+                  if (isLocked) {
+                    onSetShowLockHint(true)
+                    return
+                  }
                   if (playing) {
                     onHandlePause()
                   } else {
@@ -275,14 +323,18 @@ export function ReaderScreen({
             minimumTrackTintColor="#b36a2e"
             maximumTrackTintColor="#d9c9b5"
             thumbTintColor="#8f4715"
+            disabled={isLocked}
             onSlidingStart={() => {
+              if (isLocked) return
               setIsSeeking(true)
               onSeekStart()
             }}
             onValueChange={value => {
+              if (isLocked) return
               onSeekValue(value)
             }}
             onSlidingComplete={value => {
+              if (isLocked) return
               setIsSeeking(false)
               onSeekEnd(value)
             }}
@@ -295,7 +347,13 @@ export function ReaderScreen({
               <View style={[styles.buttonRow, immersiveMode && styles.buttonRowImmersive]}>
                 <Pressable
                   style={[styles.ctrlBtn, styles.ctrlBtnPrimary, playing ? styles.pauseBtn : styles.playBtn]}
-                  onPress={playing ? onHandlePause : onHandlePlay}
+                  onPress={() => {
+                    if (isLocked) {
+                      onSetShowLockHint(true)
+                      return
+                    }
+                    playing ? onHandlePause() : onHandlePlay()
+                  }}
                 >
                   <Ionicons
                     name={playing ? 'pause-circle' : 'play-circle'}
@@ -305,7 +363,16 @@ export function ReaderScreen({
                   />
                   <Text style={styles.ctrlBtnText}>{playing ? '暂停' : '播放'}</Text>
                 </Pressable>
-                <Pressable style={[styles.ctrlBtn, styles.stopBtn]} onPress={onHandleStop}>
+                <Pressable
+                  style={[styles.ctrlBtn, styles.stopBtn]}
+                  onPress={() => {
+                    if (isLocked) {
+                      onSetShowLockHint(true)
+                      return
+                    }
+                    onHandleStop()
+                  }}
+                >
                   <Ionicons
                     name="stop-circle"
                     size={28}

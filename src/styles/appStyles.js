@@ -468,9 +468,11 @@ export const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   drawerQuickSide: {
-    width: 62,
-    alignItems: 'flex-start',
-    justifyContent: 'center',
+    minWidth: 70,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    gap: 6,
   },
   drawerQuickSideRight: {
     alignItems: 'flex-end',
@@ -501,6 +503,32 @@ export const styles = StyleSheet.create({
   },
   miniPauseBtn: {
     backgroundColor: '#d18338',
+  },
+  lockBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#efe2cf',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#dcc7b0',
+  },
+  lockBtnLocked: {
+    backgroundColor: '#fde8e4',
+    borderColor: '#f5c6bb',
+  },
+  unlockHint: {
+    position: 'absolute',
+    top: -40,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  unlockHintText: {
+    color: '#fff',
+    fontSize: 12,
   },
   drawerSlider: {
     marginTop: 0,

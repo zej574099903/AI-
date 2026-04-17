@@ -114,6 +114,7 @@ export default function App() {
   const [immersiveMode, setImmersiveMode] = useState(false)
   const [chromeHidden, setChromeHidden] = useState(false)
   const [playerExpanded, setPlayerExpanded] = useState(false)
+  const [isLocked, setIsLocked] = useState(false)
   const shouldHideTabBar = activeTab === 'reader' && immersiveMode
 
   const sentencesRef = useRef([])
@@ -607,6 +608,7 @@ export default function App() {
     setImmersiveMode(false)
     setChromeHidden(false)
     setPlayerExpanded(false)
+    setIsLocked(false)
     navigateToTab('library')
   }
 
@@ -851,6 +853,8 @@ export default function App() {
           statusText={statusText}
           styles={styles}
           voice={voice}
+          isLocked={isLocked}
+          onSetIsLocked={setIsLocked}
         />
       )
     }
