@@ -290,16 +290,26 @@ async function synthesizeWithTencent(text, options = {}) {
     throw error
   }
 
+  // 过滤无效文本（如果没有汉字或英文字母，腾讯云大模型会报错）
+  const hasValidText = /[\u4e00-\u9fa5a-zA-Z0-9]/.test(text)
+  if (!hasValidText) {
+    console.log('跳过无效文本片段:', JSON.stringify(text))
+    return Buffer.alloc(0)
+  }
+
+  const isLargeModel = String(options.voiceType || '').startsWith('301')
   const params = {
     Text: text,
     SessionId: `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    ModelType: 1,
+    ModelType: isLargeModel ? 2 : 1,
     VoiceType: Number(options.voiceType || 101055),
     Codec: 'mp3',
     SampleRate: 16000,
     Speed: Number(options.speed || 0),
     Volume: 0,
   }
+
+  console.log(`[TTS 请求] 模型:${params.ModelType} 音色:${params.VoiceType} 语速:${params.Speed} 文本:${text.slice(0, 20)}...`)
 
   return new Promise((resolve, reject) => {
     ttsClient.TextToVoice(params).then(
@@ -308,10 +318,12 @@ async function synthesizeWithTencent(text, options = {}) {
           reject(new Error('Tencent TTS returned no audio data'))
           return
         }
-        resolve(Buffer.from(data.Audio, 'base64'))
+        const audioBuffer = Buffer.from(data.Audio, 'base64')
+        console.log(`[TTS 成功] 音频大小: ${(audioBuffer.length / 1024).toFixed(1)} KB`)
+        resolve(audioBuffer)
       },
       (err) => {
-        console.error('Tencent TTS Error:', err)
+        console.error('Tencent TTS API 错误详情:', err)
         const code = err.code || err.Code
         const message = err.message || err.Message || 'Tencent TTS request failed'
         const error = new Error(code ? `${code}: ${message}` : message)

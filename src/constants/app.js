@@ -2,8 +2,8 @@ export const STORAGE_KEY = 'pdf-reader-progress-v2'
 export const API_BASE_KEY = 'pdf-reader-api-base'
 export const LIBRARY_KEY = 'pdf-reader-library-v1'
 export const QUOTA_KEY = 'pdf-reader-quota-v1'
-export const DEFAULT_API_BASE = 'https://selling-transcripts-pot-logging.trycloudflare.com'
-export const FREE_TTS_CHARS_PER_MONTH = 8000000
+export const DEFAULT_API_BASE = 'http://10.30.56.27:8787'
+export const FREE_TTS_CHARS_PER_MONTH = 100000
 export const DEFAULT_PAUSE_MS = 25
 export const PARAGRAPH_PAUSE_MS = 50
 export const PREFETCH_SENTENCE_COUNT = 2
@@ -11,6 +11,8 @@ export const PLAYBACK_CHUNK_MAX_SENTENCES = 6
 export const PLAYBACK_CHUNK_MAX_CHARS = 260
 
 export const VOICES = [
+  { id: '301001', label: '智妮（大模型）' },
+  { id: '301002', label: '智欢（大模型）' },
   { id: '101055', label: '知冰（女）' },
   { id: '101027', label: '知晗（女）' },
   { id: '101054', label: '知峻（男）' },

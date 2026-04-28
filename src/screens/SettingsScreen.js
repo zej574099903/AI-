@@ -74,7 +74,7 @@ export function SettingsScreen({
         <Text style={styles.settingsTitle}>腾讯云免费额度</Text>
         <Text style={styles.quotaValue}>{quotaRemainingText}</Text>
         <Text style={styles.settingsHint}>
-          按腾讯云语音合成官方 800 万字符免费额度做本地估算，当前月份已累计约 {(quotaUsedChars / 10000).toFixed(1)} 万字。
+          按腾讯云大模型 10 万字符免费包做本地估算，当前已累计约 {(quotaUsedChars / 10000).toFixed(1)} 万字。
         </Text>
       </View>
     </>
